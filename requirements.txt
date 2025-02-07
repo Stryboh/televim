@@ -1,0 +1,2 @@
+Telethon==1.38.1
+wcwidth==0.2.13
