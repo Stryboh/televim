@@ -172,10 +172,18 @@ def draw_message_lines(win, lines, line_offset, width, height):
         if line_offset + i < len(lines):
             line = lines[line_offset + i]
             display_line = pad_to_width(slice_by_width(line, width), width)
-            try:
-                win.addstr(i, 0, display_line)
-            except curses.error:
-                pass
+            for symbol in display_line:
+                if symbol in ['╰', '─', '╯', '╭', '╮', '│']:
+                    try:
+                        win.addstr(symbol, curses.color_pair(1))
+                    except:
+                        pass
+                else:
+                    try:
+                        win.addstr(symbol)
+                    except:
+                        pass
+            win.addstr(i,0,"")
         else:
             break
     win.noutrefresh()
