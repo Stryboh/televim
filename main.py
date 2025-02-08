@@ -1,8 +1,9 @@
-import asyncio
+
 import curses
 import glob
 import os
 import textwrap
+import asyncio
 from curses import textpad
 
 from telethon import TelegramClient
@@ -59,7 +60,6 @@ def draw_chat_window(win, chat_list, selected, offset, width, height):
         line = pad_to_width(slice_by_width(title, width), width)
         try:
             if index == selected:
-                # Выделяем выбранную строку через передачу атрибута напрямую
                 win.addstr(i, 0, line, curses.A_REVERSE)
             else:
                 win.addstr(i, 0, line)
@@ -69,8 +69,8 @@ def draw_chat_window(win, chat_list, selected, offset, width, height):
 
 
 # --- Асинхронная загрузка сообщений ---
-async def fetch_messages(client, dialog, limit=50):
-    messages = await client.get_messages(dialog.entity, limit=limit)
+async def fetch_messages(client, dialog, limit=50, offset_id=0):
+    messages = await client.get_messages(dialog.entity, limit=limit, offset_id=offset_id)
     messages.reverse()
     return messages
 
@@ -107,7 +107,12 @@ async def prepare_message_blocks(messages, max_width, client):
         block = []
         sender_line = pad_to_width(slice_by_width(sender, max_width), max_width)
         block.append(sender_line)
-        top_border = "+" + "-" * border_width + "+"
+
+
+        top_border = "╭" + "─" * border_width + "╮"
+        bot_border = "╰" + "─" * border_width + "╯"
+
+        #top_border = "+" + "-" * border_width + "+"
         block.append(top_border)
 
         for line in wrapped:
@@ -115,59 +120,38 @@ async def prepare_message_blocks(messages, max_width, client):
             padding = border_width - line_display_width
             block.append("|" + line + " " * padding + "|")
 
-        block.append(top_border)
+        block.append(bot_border)
         blocks.append(block)
-        blocks.append('\n')
+        blocks.append('\n')  # Разделитель между сообщениями
     return blocks
 
 
-# --- Отрисовка блоков сообщений (правое окно) ---
-def draw_message_blocks(win, blocks, block_index, width, height):
-    win.erase()
-    y = 0
-    # Выводим блоки начиная с block_index до тех пор, пока есть место в окне
-    for i in range(block_index, len(blocks)):
-        block = blocks[i]
-        if isinstance(block, list):
-            block_height = len(block)
-            if y + block_height > height:
-                break
-            for line in block:
-                try:
-                    display_line = pad_to_width(slice_by_width(line, width), width)
-                    win.addstr(y, 0, display_line)
-                except curses.error:
-                    pass
-                y += 1
-        else:
-            if y < height:
-                try:
-                    win.addstr(y, 0, "")
-                except curses.error:
-                    pass
-            y += 1
-    win.noutrefresh()
-
-
-# --- Вычисление начального индекса блоков для вывода сообщений так,
-# чтобы при открытии чата в окне сообщений сразу отображалась нижняя (новейшая) часть ---
-def calc_block_index(blocks, win_height):
-    total_lines = 0
+# --- Функция для преобразования списка блоков в список строк ---
+def flatten_blocks(blocks):
+    lines = []
     for block in blocks:
         if isinstance(block, list):
-            total_lines += len(block)
+            lines.extend(block)
         else:
-            total_lines += 1
-    if total_lines <= win_height:
-        return 0
-    lines_to_skip = total_lines - win_height
-    current_skip = 0
-    for i, block in enumerate(blocks):
-        block_height = len(block) if isinstance(block, list) else 1
-        if current_skip + block_height > lines_to_skip:
-            return i
-        current_skip += block_height
-    return 0
+            # Если не список (например, разделитель), считаем как пустую строку
+            lines.append("")
+    return lines
+
+
+# --- Отрисовка сообщений построчно (с использованием line_offset) ---
+def draw_message_lines(win, lines, line_offset, width, height):
+    win.erase()
+    for i in range(height):
+        if line_offset + i < len(lines):
+            line = lines[line_offset + i]
+            display_line = pad_to_width(slice_by_width(line, width), width)
+            try:
+                win.addstr(i, 0, display_line)
+            except curses.error:
+                pass
+        else:
+            break
+    win.noutrefresh()
 
 
 # --- Основной цикл приложения ---
@@ -186,11 +170,15 @@ async def main_loop(stdscr, client, chat_list):
     focus = "chat"
     selected_chat = 0
     chat_offset = 0
-    block_index = 0
+
+    # Для сообщений будем использовать "line_offset" – сколько строк пропущено от начала списка
     messages = []
     message_blocks = []
+    flat_lines = []
+    line_offset = 0
 
     while True:
+        # Обновляем окно чатов
         if selected_chat < chat_offset:
             chat_offset = selected_chat
         elif selected_chat >= chat_offset + chat_win_height:
@@ -198,10 +186,10 @@ async def main_loop(stdscr, client, chat_list):
 
         draw_chat_window(chat_win, chat_list, selected_chat, chat_offset, chat_win_width, chat_win_height)
 
-        if focus == "msg" and message_blocks:
+        if focus == "msg" and flat_lines:
             sender_name = chat_list[selected_chat].title if chat_list[selected_chat].title else "No Name"
             display_sender = pad_to_width(slice_by_width(sender_name, msg_win_width), msg_win_width)
-            draw_message_blocks(msg_win, message_blocks, block_index, msg_win_width, msg_win_height)
+            draw_message_lines(msg_win, flat_lines, line_offset, msg_win_width, msg_win_height)
             draw_msg_border(stdscr, 2, chat_win_width + 1, msg_win_height, msg_win_width)
             try:
                 stdscr.addstr(0, chat_win_width + 1, display_sender)
@@ -220,6 +208,7 @@ async def main_loop(stdscr, client, chat_list):
         curses.doupdate()
 
         key = stdscr.getch()
+
         if focus == "chat":
             if key in (ord('j'), curses.KEY_DOWN):
                 if selected_chat < len(chat_list) - 1:
@@ -228,20 +217,43 @@ async def main_loop(stdscr, client, chat_list):
                 if selected_chat > 0:
                     selected_chat -= 1
             elif key in (ord('l'), 10, 13):
-                # Асинхронная загрузка сообщений
+                # При выборе чата загружаем первые 50 сообщений и подготавливаем отображение
                 messages = await fetch_messages(client, chat_list[selected_chat], limit=50)
                 message_blocks = await prepare_message_blocks(messages, msg_win_width, client)
-                block_index = calc_block_index(message_blocks, msg_win_height)
+                flat_lines = flatten_blocks(message_blocks)
+                if len(flat_lines) > msg_win_height:
+                    line_offset = len(flat_lines) - msg_win_height
+                else:
+                    line_offset = 0
                 focus = "msg"
             elif key in (ord('q'), 27):
                 break
+
         elif focus == "msg":
+            # Получаем текущее количество строк
+            total_lines = len(flat_lines)
             if key in (ord('j'), curses.KEY_DOWN):
-                if block_index < len(message_blocks) - 1:
-                    block_index += 1
+                if line_offset < total_lines - msg_win_height:
+                    line_offset += 1
             elif key in (ord('k'), curses.KEY_UP):
-                if block_index > 0:
-                    block_index -= 1
+                if line_offset > 0:
+                    line_offset -= 1
+                else:
+                    # Если мы на самом верху текущей истории, пытаемся загрузить старые сообщения
+                    if messages:
+                        oldest_message_id = messages[0].id  # ID самого старого сообщения
+                        older_messages = await fetch_messages(client, chat_list[selected_chat], limit=50, offset_id=oldest_message_id)
+                        if older_messages:
+                            new_blocks = await prepare_message_blocks(older_messages, msg_win_width, client)
+                            new_flat_lines = flatten_blocks(new_blocks)
+                            # Сохраняем текущее количество строк, чтобы скорректировать offset
+                            old_total = len(flat_lines)
+                            messages = older_messages + messages
+                            message_blocks = new_blocks + message_blocks
+                            flat_lines = flatten_blocks(message_blocks)
+                            # Новые строки вставляются в начало, поэтому сдвигаем offset вниз на их число,
+                            # чтобы видимая область осталась прежней
+                            line_offset += len(new_flat_lines)
             elif key in (ord('h'), ord('q'), 27):
                 focus = "chat"
 
@@ -262,8 +274,9 @@ def main(stdscr):
     except:
         pass
 
-    f = os.getcwd() + "/downloads/*"
-    files = glob.glob(f'{f}')
+    # Очистка папки downloads
+    downloads_path = os.path.join(os.getcwd(), "downloads", "*")
+    files = glob.glob(downloads_path)
     for file in files:
         os.remove(file)
 
