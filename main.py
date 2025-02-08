@@ -71,14 +71,14 @@ def draw_chat_window(win, chat_list, selected, offset, width, height):
 
 
 # --- Асинхронная загрузка сообщений ---
-async def fetch_messages(client, dialog, limit=50, offset_id=0):
+async def fetch_messages(dialog, limit=50, offset_id=0):
     messages = await client.get_messages(dialog.entity, limit=limit, offset_id=offset_id)
     messages.reverse()
     return messages
 
 
 # --- Подготовка блоков сообщений для отображения ---
-async def prepare_message_blocks(messages, max_width, client):
+async def prepare_message_blocks(messages, max_width):
     blocks = []
     for msg in messages:
         # Определяем имя отправителя
@@ -281,7 +281,7 @@ def message_input_window(stdscr, win_width, win_height):
 
 
 # --- Основной цикл приложения ---
-async def main_loop(stdscr, client, chat_list):
+async def main_loop(stdscr, chat_list):
     curses.curs_set(0)
     stdscr.erase()
     height, width = stdscr.getmaxyx()
@@ -344,8 +344,8 @@ async def main_loop(stdscr, client, chat_list):
                     selected_chat -= 1
             elif key in (ord('l'), 10, 13):
                 # При выборе чата загружаем первые 50 сообщений и подготавливаем отображение
-                messages = await fetch_messages(client, chat_list[selected_chat], limit=50)
-                message_blocks = await prepare_message_blocks(messages, msg_win_width, client)
+                messages = await fetch_messages(chat_list[selected_chat], limit=50)
+                message_blocks = await prepare_message_blocks(messages, msg_win_width)
                 flat_lines = flatten_blocks(message_blocks)
                 if len(flat_lines) > msg_win_height:
                     line_offset = len(flat_lines) - msg_win_height
@@ -364,7 +364,7 @@ async def main_loop(stdscr, client, chat_list):
                     # Отправляем сообщение
                     sent_msg = await client.send_message(chat_list[selected_chat].entity, input_text)
                     # Добавляем отправленное сообщение в историю (новое сообщение будет выравнено вправо)
-                    new_block = await prepare_message_blocks([sent_msg], msg_win_width, client)
+                    new_block = await prepare_message_blocks([sent_msg], msg_win_width)
                     new_flat_lines = flatten_blocks(new_block)
                     flat_lines.extend(new_flat_lines)
                     total_lines = len(flat_lines)
@@ -384,9 +384,9 @@ async def main_loop(stdscr, client, chat_list):
                 else:
                     if messages:
                         oldest_message_id = messages[0].id
-                        older_messages = await fetch_messages(client, chat_list[selected_chat], limit=50, offset_id=oldest_message_id)
+                        older_messages = await fetch_messages(chat_list[selected_chat], limit=50, offset_id=oldest_message_id)
                         if older_messages:
-                            new_blocks = await prepare_message_blocks(older_messages, msg_win_width, client)
+                            new_blocks = await prepare_message_blocks(older_messages, msg_win_width)
                             new_flat_lines = flatten_blocks(new_blocks)
                             messages = older_messages + messages
                             message_blocks = new_blocks + message_blocks
@@ -408,7 +408,7 @@ def main(stdscr):
     loop = asyncio.get_event_loop()
     loop.run_until_complete(client.connect())
     chat_list = loop.run_until_complete(client.get_dialogs())
-    loop.run_until_complete(main_loop(stdscr, client, chat_list))
+    loop.run_until_complete(main_loop(stdscr, chat_list))
     try:
         loop.run_until_complete(client.disconnect())
     except Exception:
