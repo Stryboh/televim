@@ -124,7 +124,7 @@ async def prepare_message_blocks(messages, max_width, client):
             for line in wrapped:
                 line_display_width = wcswidth(line)
                 padding = border_width - line_display_width
-                content_line = "|" + line + " " * padding + "|"
+                content_line = "│" + line + " " * padding + "│"
                 content_line = " " * left_padding + content_line
                 block.append(content_line)
 
@@ -143,7 +143,7 @@ async def prepare_message_blocks(messages, max_width, client):
             for line in wrapped:
                 line_display_width = wcswidth(line)
                 padding = border_width - line_display_width
-                block.append("|" + line + " " * padding + "|")
+                block.append("│" + line + " " * padding + "│")
 
             bot_border = "╰" + "─" * border_width + "╯"
             block.append(bot_border)
