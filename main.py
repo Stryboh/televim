@@ -75,6 +75,7 @@ async def fetch_messages(client, dialog, limit=50, offset_id=0):
     return messages
 
 
+
 # --- Подготовка блоков сообщений для отображения ---
 async def prepare_message_blocks(messages, max_width, client):
     blocks = []
@@ -104,27 +105,54 @@ async def prepare_message_blocks(messages, max_width, client):
         if border_width <= 0:
             border_width = max_width - 2
 
-        block = []
-        sender_line = pad_to_width(slice_by_width(sender, max_width), max_width)
-        block.append(sender_line)
+        # Формирование блока сообщения.
+        # Для исходящих сообщений (ваших) выравнивание будет справа,
+        # для остальных – по умолчанию (слева).
+        if getattr(msg, 'out', False):
+            # Мое сообщение: вычисляем ширину блока (рамка + границы)
+            block_width = border_width + 2  # рамка с двух сторон
+            left_padding = max_width - block_width if max_width > block_width else 0
 
+            block = []
+            # Формируем sender_line с нужной шириной (блок выравниваем по правому краю)
+            sender_line = pad_to_width(slice_by_width(sender, block_width), block_width)
+            sender_line = " " * left_padding + sender_line
+            block.append(sender_line)
 
-        top_border = "╭" + "─" * border_width + "╮"
-        bot_border = "╰" + "─" * border_width + "╯"
+            top_border = "╭" + "─" * border_width + "╮"
+            top_border = " " * left_padding + top_border
+            block.append(top_border)
 
-        #top_border = "+" + "-" * border_width + "+"
-        block.append(top_border)
+            for line in wrapped:
+                line_display_width = wcswidth(line)
+                padding = border_width - line_display_width
+                content_line = "|" + line + " " * padding + "|"
+                content_line = " " * left_padding + content_line
+                block.append(content_line)
 
-        for line in wrapped:
-            line_display_width = wcswidth(line)
-            padding = border_width - line_display_width
-            block.append("|" + line + " " * padding + "|")
+            bot_border = "╰" + "─" * border_width + "╯"
+            bot_border = " " * left_padding + bot_border
+            block.append(bot_border)
+        else:
+            # Сообщение от собеседника: выравниваем слева (как и раньше)
+            block = []
+            sender_line = pad_to_width(slice_by_width(sender, max_width), max_width)
+            block.append(sender_line)
 
-        block.append(bot_border)
+            top_border = "╭" + "─" * border_width + "╮"
+            block.append(top_border)
+
+            for line in wrapped:
+                line_display_width = wcswidth(line)
+                padding = border_width - line_display_width
+                block.append("|" + line + " " * padding + "|")
+
+            bot_border = "╰" + "─" * border_width + "╯"
+            block.append(bot_border)
+
         blocks.append(block)
         blocks.append('\n')  # Разделитель между сообщениями
     return blocks
-
 
 # --- Функция для преобразования списка блоков в список строк ---
 def flatten_blocks(blocks):
