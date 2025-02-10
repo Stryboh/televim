@@ -6,7 +6,8 @@ import textwrap
 import asyncio
 from curses import textpad
 
-from telethon import TelegramClient
+from telethon import TelegramClient, events
+from telethon.tl.types import PeerUser, PeerChat, PeerChannel
 from wcwidth import wcswidth
 
 import credentials
@@ -17,6 +18,30 @@ try:
     client.start()
 finally:
     client.disconnect()
+
+
+# Функции для нормализации идентификаторов диалогов и сообщений
+def get_dialog_id(dialog):
+    """
+    Возвращает идентификатор диалога (для User, Chat, Channel)
+    """
+    if hasattr(dialog.entity, 'id'):
+        return dialog.entity.id
+    return None
+
+def get_message_peer_id(message):
+    """
+    Возвращает идентификатор получателя сообщения для разных типов:
+    для PeerUser – user_id, для PeerChat – chat_id, для PeerChannel – channel_id.
+    """
+    peer = message.to_id
+    if isinstance(peer, PeerUser):
+        return peer.user_id
+    elif isinstance(peer, PeerChat):
+        return peer.chat_id
+    elif isinstance(peer, PeerChannel):
+        return peer.channel_id
+    return None
 
 
 # --- Функции для работы с дисплейной шириной строк (учитывают эмодзи и широкие символы) ---
@@ -32,14 +57,12 @@ def slice_by_width(text, max_width):
         current_width += ch_width
     return result
 
-
 def pad_to_width(text, width):
-    """Дополняет строку пробелами, чтобы её дисплейная ширина стала равна width."""
+    """Дополняет строку пробелами до заданной дисплейной ширины."""
     current_width = wcswidth(text)
     if current_width < width:
         return text + " " * (width - current_width)
     return text
-
 
 def draw_msg_border(stdscr, top, left, height, width):
     try:
@@ -49,8 +72,7 @@ def draw_msg_border(stdscr, top, left, height, width):
     except curses.error:
         pass
 
-
-# --- Отрисовка списка чатов (левое окно) с учетом смещения ---
+# --- Отрисовка списка чатов с учётом непрочитанных сообщений ---
 def draw_chat_window(win, chat_list, selected, offset, width, height):
     win.erase()
     for i in range(height):
@@ -58,8 +80,11 @@ def draw_chat_window(win, chat_list, selected, offset, width, height):
         if index >= len(chat_list):
             break
         title = chat_list[index].title if chat_list[index].title else "No Title"
-        # Обрезаем и дополняем строку с учетом дисплейной ширины
+        # Обрезаем по ширине и дополняем пробелами
         line = pad_to_width(slice_by_width(title, width), width)
+        # Если у диалога есть непрочитанные сообщения, заменяем последний символ на "+"
+        if hasattr(chat_list[index], 'unread_count') and chat_list[index].unread_count and chat_list[index].unread_count > 0:
+            line = line[:-1] + '+'
         try:
             if index == selected:
                 win.addstr(i, 0, line, curses.A_REVERSE)
@@ -69,103 +94,84 @@ def draw_chat_window(win, chat_list, selected, offset, width, height):
             pass
     win.noutrefresh()
 
-
-# --- Асинхронная загрузка сообщений ---
-async def fetch_messages(dialog, limit=50, offset_id=0):
+# --- Асинхронная загрузка сообщений диалога ---
+async def fetch_messages(dialog, limit=20, offset_id=0):
     messages = await client.get_messages(dialog.entity, limit=limit, offset_id=offset_id)
     messages.reverse()
     return messages
-
 
 # --- Подготовка блоков сообщений для отображения ---
 async def prepare_message_blocks(messages, max_width):
     blocks = []
     for msg in messages:
-        # Определяем имя отправителя
         try:
             sender = msg.sender.first_name if (msg.sender and hasattr(msg.sender, 'first_name')) else "Unknown"
         except Exception:
             sender = "Unknown"
-
-        # Текст сообщения (если отсутствует – пустая строка)
         text = msg.text if msg.text else ""
         if msg.photo:
             path = await client.download_media(msg.media, f"downloads/{msg.id}.jpg")
             path = "file://" + os.getcwd() + "/downloads/" + path[10:]
             text += path
 
-        # Оборачиваем текст по (max_width-2) символов (учитывая боковые границы)
         wrapped = []
         for paragraph in text.splitlines():
             wrapped.extend(textwrap.wrap(paragraph, width=max_width - 2) or [""])
         if not wrapped:
             wrapped = [""]
 
-        # Определяем дисплейную ширину рамки – максимальная ширина обернутых строк
         border_width = max((wcswidth(line) for line in wrapped), default=0)
         if border_width <= 0:
             border_width = max_width - 2
 
-        # Формирование блока сообщения.
-        # Если сообщение исходящее (ваше), выравниваем его вправо.
         if getattr(msg, 'out', False):
-            block_width = border_width + 2  # учитываем рамку с обеих сторон
+            # Для исходящих сообщений – выравнивание вправо
+            block_width = border_width + 2
             left_padding = max_width - block_width if max_width > block_width else 0
-
             block = []
             sender_line = pad_to_width(slice_by_width(sender, block_width), block_width)
             sender_line = " " * left_padding + sender_line
             block.append(sender_line)
-
             top_border = "╭" + "─" * border_width + "╮"
             top_border = " " * left_padding + top_border
             block.append(top_border)
-
             for line in wrapped:
                 line_display_width = wcswidth(line)
                 padding = border_width - line_display_width
                 content_line = "│" + line + " " * padding + "│"
                 content_line = " " * left_padding + content_line
                 block.append(content_line)
-
             bot_border = "╰" + "─" * border_width + "╯"
             bot_border = " " * left_padding + bot_border
             block.append(bot_border)
         else:
-            # Сообщение от собеседника: выравниваем слева
+            # Для входящих сообщений – выравнивание влево
             block = []
             sender_line = pad_to_width(slice_by_width(sender, max_width), max_width)
             block.append(sender_line)
-
             top_border = "╭" + "─" * border_width + "╮"
             block.append(top_border)
-
             for line in wrapped:
                 line_display_width = wcswidth(line)
                 padding = border_width - line_display_width
                 block.append("│" + line + " " * padding + "│")
-
             bot_border = "╰" + "─" * border_width + "╯"
             block.append(bot_border)
-
         blocks.append(block)
-        blocks.append('\n')  # разделитель между сообщениями
+        blocks.append('\n')
     return blocks
 
-
-# --- Функция для преобразования списка блоков в список строк ---
+# --- Преобразование блоков сообщений в список строк ---
 def flatten_blocks(blocks):
     lines = []
     for block in blocks:
         if isinstance(block, list):
             lines.extend(block)
         else:
-            # Если не список (например, разделитель), считаем как пустую строку
             lines.append("")
     return lines
 
-
-# --- Отрисовка сообщений построчно (с использованием line_offset) ---
+# --- Отрисовка сообщений (с учётом line_offset) ---
 def draw_message_lines(win, lines, line_offset, width, height):
     win.erase()
     for i in range(height):
@@ -188,9 +194,9 @@ def draw_message_lines(win, lines, line_offset, width, height):
             break
     win.noutrefresh()
 
+# --- Функция ввода сообщения с использованием textpad (голубая рамка) ---
 
-# --- Функция для ввода сообщения (всплывающее окно) с сузенной текстовой областью и голубой рамкой ---
-def message_input_window(stdscr, win_width, win_height):
+def message_input_window(win_width, win_height):
     # Определяем позицию окна по центру экрана
     start_y = (curses.LINES - win_height) // 2
     start_x = (curses.COLS - win_width) // 2
@@ -280,10 +286,11 @@ def message_input_window(stdscr, win_width, win_height):
                 continue
 
 
-# --- Основной цикл приложения ---
+ # --- Основной цикл приложения ---
 async def main_loop(stdscr, chat_list):
     curses.curs_set(0)
     stdscr.erase()
+    stdscr.nodelay(True)  # неблокирующий ввод
     height, width = stdscr.getmaxyx()
     chat_win_width = int(width * 0.3)
     msg_win_width = width - chat_win_width - 2
@@ -297,14 +304,44 @@ async def main_loop(stdscr, chat_list):
     selected_chat = 0
     chat_offset = 0
 
-    # Для сообщений используем "line_offset" – сколько строк пропущено от начала списка
     messages = []
     message_blocks = []
     flat_lines = []
     line_offset = 0
 
+    # --- Обработчик новых сообщений (учитываем все типы диалогов) ---
+    async def new_message_handler(event):
+        nonlocal chat_list, messages, message_blocks, flat_lines, line_offset, focus, selected_chat, msg_win_width, msg_win_height
+        try:
+            # Обновляем список диалогов для получения актуальных отметок непрочитанных сообщений
+            new_dialogs = await client.get_dialogs()
+            chat_list = new_dialogs
+
+            # Получаем идентификатор получателя нового сообщения
+            msg_peer_id = get_message_peer_id(event.message)
+            current_dialog_id = get_dialog_id(chat_list[selected_chat])
+            # Если новое сообщение относится к открытому диалогу, добавляем его
+            if focus == "msg" and msg_peer_id is not None and current_dialog_id is not None and msg_peer_id == current_dialog_id:
+                new_block = await prepare_message_blocks([event.message], msg_win_width)
+                new_flat_lines = flatten_blocks(new_block)
+                flat_lines.extend(new_flat_lines)
+                messages.append(event.message)
+                # Если пользователь находится внизу, обновляем line_offset так, чтобы новое сообщение было видно
+                if line_offset >= len(flat_lines) - msg_win_height - 1:
+                    line_offset = max(0, len(flat_lines) - msg_win_height)
+                    # Отправляем подтверждение прочтения...
+                    await client.send_read_acknowledge(chat_list[selected_chat].entity)
+                    # ...и обновляем список диалогов, чтобы убрать "+"
+                    chat_list = await client.get_dialogs()
+        except Exception as e:
+            pass
+
+    # Регистрируем обработчик новых сообщений
+    client.add_event_handler(new_message_handler, events.NewMessage)
+    # --- Конец обработчика ---
+
     while True:
-        # Обновляем окно чатов
+        # Отрисовка списка чатов
         if selected_chat < chat_offset:
             chat_offset = selected_chat
         elif selected_chat >= chat_offset + chat_win_height:
@@ -333,7 +370,11 @@ async def main_loop(stdscr, chat_list):
         stdscr.noutrefresh()
         curses.doupdate()
 
+        # Получаем ввод в неблокирующем режиме
         key = stdscr.getch()
+        if key == -1:
+            await asyncio.sleep(0.05)
+            continue
 
         if focus == "chat":
             if key in (ord('j'), curses.KEY_DOWN):
@@ -343,8 +384,10 @@ async def main_loop(stdscr, chat_list):
                 if selected_chat > 0:
                     selected_chat -= 1
             elif key in (ord('l'), 10, 13):
-                # При выборе чата загружаем первые 50 сообщений и подготавливаем отображение
-                messages = await fetch_messages(chat_list[selected_chat], limit=50)
+                # При открытии чата – отправляем подтверждение прочтения и обновляем диалог
+                await client.send_read_acknowledge(chat_list[selected_chat].entity)
+                chat_list = await client.get_dialogs()
+                messages = await fetch_messages(chat_list[selected_chat], limit=20)
                 message_blocks = await prepare_message_blocks(messages, msg_win_width)
                 flat_lines = flatten_blocks(message_blocks)
                 if len(flat_lines) > msg_win_height:
@@ -356,17 +399,14 @@ async def main_loop(stdscr, chat_list):
                 break
 
         elif focus == "msg":
-            # Возможность отправки сообщения: клавиша i
             if key == ord('i'):
-                # Открываем окно ввода (размер окна: 7 строк, ширина: msg_win_width-4)
-                input_text = message_input_window(stdscr, msg_win_width - 4, 7)
+                input_text = message_input_window(msg_win_width - 4, 7)
                 if input_text is not None and input_text.strip() != "":
-                    # Отправляем сообщение
                     sent_msg = await client.send_message(chat_list[selected_chat].entity, input_text)
-                    # Добавляем отправленное сообщение в историю (новое сообщение будет выравнено вправо)
                     new_block = await prepare_message_blocks([sent_msg], msg_win_width)
                     new_flat_lines = flatten_blocks(new_block)
                     flat_lines.extend(new_flat_lines)
+                    messages.append(sent_msg)
                     total_lines = len(flat_lines)
                     if total_lines > msg_win_height:
                         line_offset = total_lines - msg_win_height
@@ -384,7 +424,7 @@ async def main_loop(stdscr, chat_list):
                 else:
                     if messages:
                         oldest_message_id = messages[0].id
-                        older_messages = await fetch_messages(chat_list[selected_chat], limit=50, offset_id=oldest_message_id)
+                        older_messages = await fetch_messages(chat_list[selected_chat], limit=20, offset_id=oldest_message_id)
                         if older_messages:
                             new_blocks = await prepare_message_blocks(older_messages, msg_win_width)
                             new_flat_lines = flatten_blocks(new_blocks)
@@ -394,7 +434,6 @@ async def main_loop(stdscr, chat_list):
                             line_offset += len(new_flat_lines)
             elif key in (ord('h'), ord('q'), 27):
                 focus = "chat"
-
 
 # --- Точка входа ---
 def main(stdscr):
@@ -414,13 +453,12 @@ def main(stdscr):
     except Exception:
         pass
 
-    # Очистка папки downloads
     downloads_path = os.path.join(os.getcwd(), "downloads", "*")
     files = glob.glob(downloads_path)
     for file in files:
         os.remove(file)
 
-
 if __name__ == "__main__":
     if os.path.exists(f'{credentials.name()}.session'):
         curses.wrapper(main)
+
