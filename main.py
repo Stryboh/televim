@@ -110,7 +110,11 @@ async def prepare_message_blocks(messages, max_width):
             sender = "Unknown"
         text = msg.text if msg.text else ""
         if msg.photo:
-            path = await client.download_media(msg.media, f"downloads/{msg.id}.jpg")
+            path = await client.download_media(msg.media, f"downloads/{msg.id}")
+            path = "file://" + os.getcwd() + "/downloads/" + path[10:]
+            text += path
+        if msg.file:
+            path = await client.download_media(msg.media, f"downloads/{msg.id}")
             path = "file://" + os.getcwd() + "/downloads/" + path[10:]
             text += path
 
