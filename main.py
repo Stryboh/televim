@@ -13,6 +13,7 @@ from wcwidth import wcswidth
 import credentials
 
 client = TelegramClient(credentials.name(), credentials.key(), credentials.hash())
+client.session.save_entities = False
 
 try:
     client.start()
@@ -109,13 +110,9 @@ async def prepare_message_blocks(messages, max_width):
         except Exception:
             sender = "Unknown"
         text = msg.text if msg.text else ""
-        if msg.photo:
-            path = await client.download_media(msg.media, f"downloads/{msg.id}")
-            path = "file://" + os.getcwd() + "/downloads/" + path[10:]
-            text += path
         if msg.file:
             path = await client.download_media(msg.media, f"downloads/{msg.id}")
-            path = "file://" + os.getcwd() + "/downloads/" + path[10:]
+            path = "\nfile://" + os.getcwd() + "/downloads/" + path[10:] + '\n'
             text += path
 
         wrapped = []
