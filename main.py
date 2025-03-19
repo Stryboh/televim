@@ -1,4 +1,3 @@
-
 import curses
 import glob
 import os
@@ -20,21 +19,12 @@ try:
 finally:
     client.disconnect()
 
-
-# Функции для нормализации идентификаторов диалогов и сообщений
 def get_dialog_id(dialog):
-    """
-    Возвращает идентификатор диалога (для User, Chat, Channel)
-    """
     if hasattr(dialog.entity, 'id'):
         return dialog.entity.id
     return None
 
 def get_message_peer_id(message):
-    """
-    Возвращает идентификатор получателя сообщения для разных типов:
-    для PeerUser – user_id, для PeerChat – chat_id, для PeerChannel – channel_id.
-    """
     peer = message.to_id
     if isinstance(peer, PeerUser):
         return peer.user_id
@@ -44,10 +34,7 @@ def get_message_peer_id(message):
         return peer.channel_id
     return None
 
-
-# --- Функции для работы с дисплейной шириной строк (учитывают эмодзи и широкие символы) ---
 def slice_by_width(text, max_width):
-    """Обрезает строку так, чтобы её дисплейная ширина не превышала max_width."""
     current_width = 0
     result = ""
     for ch in text:
@@ -59,7 +46,6 @@ def slice_by_width(text, max_width):
     return result
 
 def pad_to_width(text, width):
-    """Дополняет строку пробелами до заданной дисплейной ширины."""
     current_width = wcswidth(text)
     if current_width < width:
         return text + " " * (width - current_width)
@@ -73,7 +59,6 @@ def draw_msg_border(stdscr, top, left, height, width):
     except curses.error:
         pass
 
-# --- Отрисовка списка чатов с учётом непрочитанных сообщений ---
 def draw_chat_window(win, chat_list, selected, offset, width, height):
     win.erase()
     for i in range(height):
@@ -81,9 +66,7 @@ def draw_chat_window(win, chat_list, selected, offset, width, height):
         if index >= len(chat_list):
             break
         title = chat_list[index].title if chat_list[index].title else "No Title"
-        # Обрезаем по ширине и дополняем пробелами
         line = pad_to_width(slice_by_width(title, width), width)
-        # Если у диалога есть непрочитанные сообщения, заменяем последний символ на "+"
         if hasattr(chat_list[index], 'unread_count') and chat_list[index].unread_count and chat_list[index].unread_count > 0:
             line = line[:-1] + '+'
         try:
@@ -95,13 +78,11 @@ def draw_chat_window(win, chat_list, selected, offset, width, height):
             pass
     win.noutrefresh()
 
-# --- Асинхронная загрузка сообщений диалога ---
 async def fetch_messages(dialog, limit=20, offset_id=0):
     messages = await client.get_messages(dialog.entity, limit=limit, offset_id=offset_id)
     messages.reverse()
     return messages
 
-# --- Подготовка блоков сообщений для отображения ---
 async def prepare_message_blocks(messages, max_width):
     blocks = []
     for msg in messages:
@@ -126,7 +107,6 @@ async def prepare_message_blocks(messages, max_width):
             border_width = max_width - 2
 
         if getattr(msg, 'out', False):
-            # Для исходящих сообщений – выравнивание вправо
             block_width = border_width + 2
             left_padding = max_width - block_width if max_width > block_width else 0
             block = []
@@ -146,7 +126,6 @@ async def prepare_message_blocks(messages, max_width):
             bot_border = " " * left_padding + bot_border
             block.append(bot_border)
         else:
-            # Для входящих сообщений – выравнивание влево
             block = []
             sender_line = pad_to_width(slice_by_width(sender, max_width), max_width)
             block.append(sender_line)
@@ -162,7 +141,6 @@ async def prepare_message_blocks(messages, max_width):
         blocks.append('\n')
     return blocks
 
-# --- Преобразование блоков сообщений в список строк ---
 def flatten_blocks(blocks):
     lines = []
     for block in blocks:
@@ -172,7 +150,6 @@ def flatten_blocks(blocks):
             lines.append("")
     return lines
 
-# --- Отрисовка сообщений (с учётом line_offset) ---
 def draw_message_lines(win, lines, line_offset, width, height):
     win.erase()
     for i in range(height):
@@ -195,15 +172,11 @@ def draw_message_lines(win, lines, line_offset, width, height):
             break
     win.noutrefresh()
 
-# --- Функция ввода сообщения с использованием textpad (голубая рамка) ---
-
 def message_input_window(win_width, win_height):
-    # Определяем позицию окна по центру экрана
     start_y = (curses.LINES - win_height) // 2
     start_x = (curses.COLS - win_width) // 2
     win = curses.newwin(win_height, win_width, start_y, start_x)
     win.keypad(True)
-    # Отрисовываем рамку голубым цветом (цветовая пара 1)
     win.attron(curses.color_pair(1))
     win.border()
     win.attroff(curses.color_pair(1))
@@ -214,35 +187,30 @@ def message_input_window(win_width, win_height):
         pass
     win.refresh()
 
-    # Буфер для ввода (список строк)
     buffer = [""]
-    # Сужаем отступы: текстовая область начинается с col=2 и заканчивается на win_width-3
     cur_y = 1
     cur_x = 2
     win.move(cur_y, cur_x)
 
     while True:
         try:
-            ch = win.get_wch()  # Используем get_wch для поддержки Unicode (например, кириллицы)
+            ch = win.get_wch()
         except curses.error:
             continue
 
         if isinstance(ch, str):
-            # Отмена ввода (Esc)
             if ch == '\x1b':
                 return None
-            # Завершение ввода (Enter) — отправка сообщения
             elif ch in ('\n', '\r'):
                 return "\n".join(buffer)
             else:
-                # Добавляем символ в текущую строку
                 buffer[cur_y - 1] += ch
                 try:
                     win.addstr(cur_y, cur_x, ch)
                 except curses.error:
                     pass
                 cur_x += 1
-                if cur_x >= win_width - 2:  # правый предел с учетом сузенной области
+                if cur_x >= win_width - 2:
                     if cur_y < win_height - 2:
                         cur_y += 1
                         cur_x = 2
@@ -251,7 +219,6 @@ def message_input_window(win_width, win_height):
                         cur_x = win_width - 3
                 win.move(cur_y, cur_x)
         elif isinstance(ch, int):
-            # Обработка Shift+Enter (предполагаем, что возвращается curses.KEY_ENTER)
             if ch == curses.KEY_ENTER:
                 buffer.append("")
                 cur_y += 1
@@ -260,7 +227,6 @@ def message_input_window(win_width, win_height):
                     cur_y = win_height - 2
                 win.move(cur_y, cur_x)
                 continue
-            # Обработка Backspace
             elif ch in (curses.KEY_BACKSPACE, 127, 8):
                 if cur_x > 2 or cur_y > 1:
                     if cur_x > 2:
@@ -272,9 +238,8 @@ def message_input_window(win_width, win_height):
                         del buffer[cur_y - 1]
                         cur_y -= 1
                         cur_x = len(buffer[cur_y - 1]) + 2
-                    # Перерисовываем текущую строку в области ввода, не затрагивая правую границу
                     win.move(cur_y, 2)
-                    clear_length = win_width - 4  # число символов для очистки в текстовой области
+                    clear_length = win_width - 4
                     win.addstr(" " * clear_length)
                     win.move(cur_y, 2)
                     try:
@@ -286,12 +251,10 @@ def message_input_window(win_width, win_height):
             else:
                 continue
 
-
- # --- Основной цикл приложения ---
 async def main_loop(stdscr, chat_list):
     curses.curs_set(0)
     stdscr.erase()
-    stdscr.nodelay(True)  # неблокирующий ввод
+    stdscr.nodelay(True)
     height, width = stdscr.getmaxyx()
     chat_win_width = int(width * 0.3)
     msg_win_width = width - chat_win_width - 2
@@ -310,39 +273,46 @@ async def main_loop(stdscr, chat_list):
     flat_lines = []
     line_offset = 0
 
-    # --- Обработчик новых сообщений (учитываем все типы диалогов) ---
     async def new_message_handler(event):
         nonlocal chat_list, messages, message_blocks, flat_lines, line_offset, focus, selected_chat, msg_win_width, msg_win_height
-        try:
-            # Обновляем список диалогов для получения актуальных отметок непрочитанных сообщений
-            new_dialogs = await client.get_dialogs()
+        
+        # Сохраняем текущий ID диалога перед обновлением
+        current_dialog = chat_list[selected_chat] if selected_chat < len(chat_list) else None
+        current_dialog_id = get_dialog_id(current_dialog) if current_dialog else None
+
+        new_dialogs = await client.get_dialogs()
+        
+        # Восстанавливаем позицию выбранного чата
+        new_selected = None
+        if current_dialog_id is not None:
+            for idx, dialog in enumerate(new_dialogs):
+                if get_dialog_id(dialog) == current_dialog_id:
+                    new_selected = idx
+                    break
+        
+        # Обновляем список и позицию только если чат существует
+        if new_selected is not None:
+            chat_list = new_dialogs
+            selected_chat = new_selected
+        else:
             chat_list = new_dialogs
 
-            # Получаем идентификатор получателя нового сообщения
-            msg_peer_id = get_message_peer_id(event.message)
-            current_dialog_id = get_dialog_id(chat_list[selected_chat])
-            # Если новое сообщение относится к открытому диалогу, добавляем его
-            if focus == "msg" and msg_peer_id is not None and current_dialog_id is not None and msg_peer_id == current_dialog_id:
-                new_block = await prepare_message_blocks([event.message], msg_win_width)
-                new_flat_lines = flatten_blocks(new_block)
-                flat_lines.extend(new_flat_lines)
-                messages.append(event.message)
-                # Если пользователь находится внизу, обновляем line_offset так, чтобы новое сообщение было видно
-                if line_offset >= len(flat_lines) - msg_win_height - 1:
-                    line_offset = max(0, len(flat_lines) - msg_win_height)
-                    # Отправляем подтверждение прочтения...
-                    await client.send_read_acknowledge(chat_list[selected_chat].entity)
-                    # ...и обновляем список диалогов, чтобы убрать "+"
-                    chat_list = await client.get_dialogs()
-        except Exception as e:
-            pass
+        msg_peer_id = get_message_peer_id(event.message)
+        current_open_dialog_id = get_dialog_id(chat_list[selected_chat]) if selected_chat < len(chat_list) else None
+        
+        if focus == "msg" and msg_peer_id == current_open_dialog_id:
+            new_block = await prepare_message_blocks([event.message], msg_win_width)
+            new_flat_lines = flatten_blocks(new_block)
+            flat_lines.extend(new_flat_lines)
+            messages.append(event.message)
+            if line_offset >= len(flat_lines) - msg_win_height - 1:
+                line_offset = max(0, len(flat_lines) - msg_win_height)
+                await client.send_read_acknowledge(chat_list[selected_chat].entity)
+                chat_list = await client.get_dialogs()
 
-    # Регистрируем обработчик новых сообщений
     client.add_event_handler(new_message_handler, events.NewMessage)
-    # --- Конец обработчика ---
 
     while True:
-        # Отрисовка списка чатов
         if selected_chat < chat_offset:
             chat_offset = selected_chat
         elif selected_chat >= chat_offset + chat_win_height:
@@ -371,7 +341,6 @@ async def main_loop(stdscr, chat_list):
         stdscr.noutrefresh()
         curses.doupdate()
 
-        # Получаем ввод в неблокирующем режиме
         key = stdscr.getch()
         if key == -1:
             await asyncio.sleep(0.05)
@@ -385,16 +354,12 @@ async def main_loop(stdscr, chat_list):
                 if selected_chat > 0:
                     selected_chat -= 1
             elif key in (ord('l'), 10, 13):
-                # При открытии чата – отправляем подтверждение прочтения и обновляем диалог
                 await client.send_read_acknowledge(chat_list[selected_chat].entity)
                 chat_list = await client.get_dialogs()
                 messages = await fetch_messages(chat_list[selected_chat], limit=20)
                 message_blocks = await prepare_message_blocks(messages, msg_win_width)
                 flat_lines = flatten_blocks(message_blocks)
-                if len(flat_lines) > msg_win_height:
-                    line_offset = len(flat_lines) - msg_win_height
-                else:
-                    line_offset = 0
+                line_offset = max(0, len(flat_lines) - msg_win_height) if len(flat_lines) > msg_win_height else 0
                 focus = "msg"
             elif key in (ord('q'), 27):
                 break
@@ -408,11 +373,7 @@ async def main_loop(stdscr, chat_list):
                     new_flat_lines = flatten_blocks(new_block)
                     flat_lines.extend(new_flat_lines)
                     messages.append(sent_msg)
-                    total_lines = len(flat_lines)
-                    if total_lines > msg_win_height:
-                        line_offset = total_lines - msg_win_height
-                    else:
-                        line_offset = 0
+                    line_offset = max(0, len(flat_lines) - msg_win_height)
                 continue
 
             total_lines = len(flat_lines)
@@ -436,7 +397,6 @@ async def main_loop(stdscr, chat_list):
             elif key in (ord('h'), ord('q'), 27):
                 focus = "chat"
 
-# --- Точка входа ---
 def main(stdscr):
     curses.start_color()
     curses.init_pair(1, curses.COLOR_CYAN, curses.COLOR_BLACK)
@@ -462,4 +422,3 @@ def main(stdscr):
 if __name__ == "__main__":
     if os.path.exists(f'{credentials.name()}.session'):
         curses.wrapper(main)
-
