@@ -142,6 +142,9 @@ class TelegramViewModel:
             await self.jump_to_latest_messages()
         elif key == ord('g'):
             await self.jump_to_oldest_messages()
+        elif key == ord('y'):
+            # Копирование выделенного сообщения в буфер обмена
+            await self.copy_message_to_clipboard()
         elif key == ord('/'):
             await self.search_messages()
         elif key in (10, curses.KEY_ENTER):
