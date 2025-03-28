@@ -51,8 +51,8 @@ async def main(stdscr):
             # viewmodel.run теперь возвращает True, если пользователь хочет выйти
             exit_app = await viewmodel.run(check_exit=lambda: exit_requested)
             if exit_app:
-                break
-            
+                    break
+        
     finally:
         # Гарантируем, что отключимся от сервера и очистим ресурсы
         await viewmodel.cleanup()
@@ -101,8 +101,9 @@ def start_app():
                 curses.endwin()
             except:
                 pass
-            os.system("clear")
-            print("Bye!")
-    
+            
+    os.system("clear")
+    print("Bye!")
+
 if __name__ == "__main__":
     start_app() 

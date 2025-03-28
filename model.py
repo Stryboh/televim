@@ -4,6 +4,8 @@ from telethon import TelegramClient, events
 from telethon.tl.types import PeerUser, PeerChat, PeerChannel
 import mimetypes
 import configparser
+import telethon
+from datetime import datetime
 
 class TelegramModel:
     def __init__(self, session_name, api_id, api_hash):
@@ -51,16 +53,39 @@ class TelegramModel:
     async def disconnect(self):
         await self.client.disconnect()
         
-    async def get_dialogs(self):
-        return await self.client.get_dialogs()
+    async def get_dialogs(self, limit=100):
+        """Получает список диалогов"""
+        return await self.client.get_dialogs(limit=limit)
         
     async def get_messages(self, entity, limit=20, offset_id=0):
         messages = await self.client.get_messages(entity, limit=limit, offset_id=offset_id)
         messages.reverse()
         return messages
         
-    async def send_message(self, entity, message):
-        return await self.client.send_message(entity, message)
+    async def send_message(self, entity, text, reply_to=None):
+        """Отправляет сообщение указанному пользователю или в чат"""
+        try:
+            # Проверяем, можно ли отправить сообщение в этот чат
+            can_send = True
+            if hasattr(entity, 'broadcast') and getattr(entity, 'broadcast', False):
+                # Канал - нужны права админа
+                if not (hasattr(entity, 'admin_rights') or hasattr(entity, 'creator')):
+                    can_send = False
+            elif hasattr(entity, 'restricted') and getattr(entity, 'restricted', False):
+                # Ограниченный чат
+                can_send = False
+                
+            if not can_send:
+                return None
+                
+            # Отправляем сообщение и проверяем результат
+            message = await self.client.send_message(entity=entity, message=text, reply_to=reply_to)
+            if message and hasattr(message, 'id'):
+                return message
+            return None
+        except Exception as e:
+            print(f"Ошибка при отправке сообщения: {e}")
+            return None
         
     async def download_media(self, media, chat_title, message_id, force_download=False, progress_callback=None):
         """Загружает медиа-файл с заданным именем или создает пустой файл-заглушку
@@ -198,3 +223,77 @@ class TelegramModel:
                             os.remove(os.path.join(root, file))
                         except Exception:
                             pass
+
+    async def get_user_status(self, entity):
+        """Получает статус пользователя (онлайн/оффлайн)"""
+        try:
+            # Проверяем, что это пользователь, а не чат или канал
+            if hasattr(entity, 'user_id'):
+                # Получаем полную информацию о пользователе
+                full_user = await self.client(telethon.functions.users.GetFullUserRequest(entity))
+                if not full_user or not hasattr(full_user, 'user'):
+                    return {'status': '', 'color': 0}
+                    
+                status = getattr(full_user.user, 'status', None)
+                
+                if status:
+                    # Если статус существует, определяем его тип
+                    if isinstance(status, telethon.types.UserStatusOnline):
+                        return {'status': 'online', 'color': 3}  # зеленый
+                    elif isinstance(status, telethon.types.UserStatusOffline):
+                        # Получаем время последнего онлайна
+                        last_online = status.was_online
+                        if last_online:
+                            # Форматируем время в зависимости от давности
+                            now = datetime.now().replace(tzinfo=last_online.tzinfo)
+                            diff = now - last_online
+                            
+                            if diff.days > 0:
+                                time_str = f"{diff.days} д. назад"
+                            elif diff.seconds > 3600:
+                                time_str = f"{diff.seconds // 3600} ч. назад"
+                            elif diff.seconds > 60:
+                                time_str = f"{diff.seconds // 60} мин. назад"
+                            else:
+                                time_str = f"{diff.seconds} сек. назад"
+                            
+                            return {'status': f"был в сети {time_str}", 'color': 4}  # красный
+                    
+                    # Для других типов статуса
+                    return {'status': 'неизвестно', 'color': 0}
+            
+            # Если это не пользователь или статус не определен
+            return {'status': '', 'color': 0}
+        except Exception as e:
+            # Игнорируем ошибки, просто возвращаем пустой статус
+            return {'status': '', 'color': 0}
+
+    async def get_messages(self, dialog, limit=20, offset_id=0):
+        messages = await self.client.get_messages(dialog, limit=limit, offset_id=offset_id)
+        messages.reverse()
+        return messages
+
+    async def check_can_send_messages(self, entity):
+        """Проверяет, можно ли отправлять сообщения в указанную сущность, используя прямой API запрос"""
+        try:
+            # Самый надежный способ - проверить реальный флаг
+            if hasattr(entity, 'broadcast') and getattr(entity, 'broadcast', False):
+                # Для каналов проверяем права админа
+                has_rights = hasattr(entity, 'admin_rights') and entity.admin_rights
+                return has_rights and hasattr(entity.admin_rights, 'post_messages') and entity.admin_rights.post_messages
+            
+            # Для групп
+            if hasattr(entity, 'default_banned_rights') and entity.default_banned_rights:
+                # Если запрещено отправлять сообщения
+                if hasattr(entity.default_banned_rights, 'send_messages') and entity.default_banned_rights.send_messages:
+                    return False
+                    
+            # Для личных чатов всегда разрешаем
+            if hasattr(entity, 'user_id'):
+                return True
+                
+            # По умолчанию разрешаем
+            return True
+        except Exception:
+            # При ошибке запрещаем
+            return False
