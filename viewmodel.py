@@ -611,29 +611,44 @@ class TelegramViewModel:
                 break
 
         if selected_message:
-            # Если у сообщения есть файл, копируем путь к файлу
-            if selected_message.file:
-                chat_title = self.chat_list[self.selected_chat].title
-                path = await self.model.download_media(
-                    selected_message.media,
-                    chat_title,
-                    selected_message.id,
-                    force_download=False
-                )
+            try:
+                # Если у сообщения есть файл, копируем путь к файлу
+                if selected_message.file:
+                    chat_title = self.chat_list[self.selected_chat].title
+                    path = await self.model.download_media(
+                        selected_message.media,
+                        chat_title,
+                        selected_message.id,
+                        force_download=False
+                    )
 
-                # Если файл был полностью загружен (проверяем размер файла)
-                if os.path.exists(path) and os.path.getsize(path) > 1000:
-                    os.system(f'echo -n "{os.path.abspath(path)}" | xclip -selection clipboard 2>/dev/null')
+                    # Если файл был полностью загружен (проверяем размер файла)
+                    if os.path.exists(path) and os.path.getsize(path) > 1000:
+                        result = os.system(f'echo -n "{os.path.abspath(path)}" | xclip -selection clipboard 2>/dev/null')
+                        if result == 0:
+                            # Отображаем статус копирования
+                            self.view.set_dialog_title(f"{self.chat_list[self.selected_chat].title} (путь к файлу скопирован)")
+                        else:
+                            self.view.set_dialog_title(f"{self.chat_list[self.selected_chat].title} (ошибка копирования)")
+                    else:
+                        # Если файл не загружен или слишком маленький, уведомляем что нужно сначала загрузить
+                        self.view.set_dialog_title(f"{self.chat_list[self.selected_chat].title} (файл не загружен)")
                 else:
-                    # Если файл не загружен или слишком маленький, уведомляем что нужно сначала загрузить
-                    print("\a")  # Звуковой сигнал
-            else:
-                # Если обычное текстовое сообщение, копируем текст
-                text = selected_message.text if selected_message.text else ""
-                if text:
-                    # Экранируем специальные символы для shell
-                    text = text.replace('"', '\\"')
-                    os.system(f'echo -n "{text}" | xclip -selection clipboard 2>/dev/null')
+                    # Если обычное текстовое сообщение, копируем текст
+                    text = selected_message.text if selected_message.text else ""
+                    if text:
+                        # Экранируем специальные символы для shell
+                        text = text.replace('"', '\\"')
+                        result = os.system(f'echo -n "{text}" | xclip -selection clipboard 2>/dev/null')
+                        if result == 0:
+                            # Отображаем статус копирования
+                            self.view.set_dialog_title(f"{self.chat_list[self.selected_chat].title} (текст скопирован)")
+                        else:
+                            self.view.set_dialog_title(f"{self.chat_list[self.selected_chat].title} (ошибка копирования)")
+            except Exception as e:
+                # В случае ошибки выводим сообщение
+                self.view.set_dialog_title(f"{self.chat_list[self.selected_chat].title} (ошибка: {str(e)})")
+                return
 
     async def jump_to_oldest_messages(self):
         """Переход к первым сообщениям, как в vim с помощью gg"""
